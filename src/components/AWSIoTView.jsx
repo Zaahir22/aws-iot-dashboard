@@ -157,11 +157,11 @@ const AWSIoTView = ({ awsStatus, setAwsStatus, appData }) => {
             <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1.5rem', position: 'relative', zIndex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
               <div>
                 <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Subscribe:</p>
-                <div style={{ color: '#3b82f6', fontFamily: 'monospace', fontSize: '0.7rem' }}>dt/xmerion/t104/metrics</div>
+                <div style={{ color: '#3b82f6', fontFamily: 'monospace', fontSize: '0.7rem' }}>dt/xmerion/+/metrics</div>
               </div>
               <div>
                 <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Publish:</p>
-                <div style={{ color: '#10b981', fontFamily: 'monospace', fontSize: '0.7rem' }}>cmd/xmerion/t104/exec</div>
+                <div style={{ color: '#10b981', fontFamily: 'monospace', fontSize: '0.7rem' }}>cmd/xmerion/+/exec</div>
               </div>
             </div>
 

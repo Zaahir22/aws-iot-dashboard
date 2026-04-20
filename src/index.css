@@ -19,6 +19,8 @@
   --accent-cyan: #06b6d4;
   --accent-red: #ef4444;
   --accent-red-glow: rgba(239, 68, 68, 0.4);
+  --accent-purple: #a855f7;
+  --accent-purple-glow: rgba(168, 85, 247, 0.35);
   --status-optimal: #10b981;
   --status-optimal-bg: rgba(16, 185, 129, 0.1);
   --status-overheat: #ef4444;
@@ -508,4 +510,105 @@ button {
   color: var(--status-standby);
   background-color: var(--status-standby-bg);
   border: 1px solid rgba(100, 116, 139, 0.2);
+}
+
+/* ── Page-level layout classes ─────────────────────────────────────────── */
+.analytics-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  height: 100%;
+}
+
+.nodes-view {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.aws-iot-view {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* ── Animations ─────────────────────────────────────────────────────────── */
+@keyframes slideInRight {
+  from {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+.blink-animation {
+  animation: blink 1.2s ease-in-out infinite;
+}
+
+.toast-enter {
+  animation: slideInRight 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+/* ── AI Anomaly Detection Styles ────────────────────────────────────── */
+
+/* Pulsing purple border card */
+.anomaly-card {
+  border: 1px solid var(--accent-purple) !important;
+  box-shadow: 0 0 0 1px var(--accent-purple-glow), 0 0 20px rgba(168, 85, 247, 0.18) !important;
+}
+
+/* AI anomaly badge pill */
+.anomaly-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.18rem 0.48rem;
+  border-radius: 4px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  background-color: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.35);
+  animation: pulse-purple 2.2s ease-in-out infinite;
+}
+
+/* Sparkline container */
+.sparkline-container {
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+}
+
+/* Anomaly toast variant */
+.toast-anomaly {
+  border-left-color: var(--accent-purple) !important;
+}
+
+@keyframes pulse-purple {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(168, 85, 247, 0);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(168, 85, 247, 0.2);
+    opacity: 0.85;
+  }
+}
+
+@keyframes anomaly-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.4), 0 0 18px rgba(168, 85, 247, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.7), 0 0 28px rgba(168, 85, 247, 0.3);
+  }
 }

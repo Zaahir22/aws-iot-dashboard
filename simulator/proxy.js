@@ -12,7 +12,7 @@ const http   = require('http');
 
 const HOST        = 'ajn6olmvk0maf-ats.iot.ap-south-1.amazonaws.com';
 const TOPIC       = 'dt/xmerion/+/metrics';
-const PROXY_PORT  = 3001;
+const PROXY_PORT  = 3010;
 
 // ── Global Node Data Store ─────────────────────────────────────────────────────
 let nodesData = {};

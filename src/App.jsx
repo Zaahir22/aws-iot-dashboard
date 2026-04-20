@@ -1,8 +1,35 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+
+// ─── AI Anomaly Detection (pure, no side-effects) ───────────────────────────
+function detectAnomaly(history, current) {
+  if (!Array.isArray(history) || history.length < 5) {
+    return { isAnomaly: false, anomalyReason: '' };
+  }
+  const safeHistory = history.filter(v => typeof v === 'number' && !isNaN(v));
+  if (safeHistory.length < 5) return { isAnomaly: false, anomalyReason: '' };
+
+  const mean = safeHistory.reduce((a, b) => a + b, 0) / safeHistory.length;
+  const variance = safeHistory.reduce((s, v) => s + (v - mean) ** 2, 0) / safeHistory.length;
+  const stdDev = Math.sqrt(variance);
+
+  // Guard against division by zero or near-zero stdDev
+  if (stdDev < 0.001) return { isAnomaly: false, anomalyReason: '' };
+
+  const safeCurrentVal = typeof current === 'number' && !isNaN(current) ? current : mean;
+  const zScore = Math.abs((safeCurrentVal - mean) / stdDev);
+  const suddenDrop = (mean - safeCurrentVal) > 0.15; // sharp health deterioration
+
+  if (zScore > 2) {
+    return { isAnomaly: true, anomalyReason: 'Unusual health trend deviation detected' };
+  }
+  if (suddenDrop) {
+    return { isAnomaly: true, anomalyReason: 'Sudden health score deterioration detected' };
+  }
+  return { isAnomaly: false, anomalyReason: '' };
+}
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
 import connectAWS from './aws-iot';
 import {
-  Zap,
   LayoutDashboard,
   BarChart3,
   Network,
@@ -20,10 +47,6 @@ import AWSIoTView from './components/AWSIoTView';
 
 // ─── Initial / default app data ────────────────────────────────────────────────
 const INITIAL_APP_DATA = {
-  loadFactor:  null,
-  peakVoltage: null,
-  meanOilTemp: null,
-  signalStrength: null,
   trendData: Array.from({ length: 24 }).map((_, i) => ({
     time: `${i}:00`,
     phaseA: 0,
@@ -38,15 +61,20 @@ function App() {
   const activePath = location.pathname;
 
   const [appData,   setAppData]           = useState(INITIAL_APP_DATA);
-  const [nodesData, setNodesData]         = useState({});
+  const [nodesData, setNodesData] = useState({
+    t104: { temperature: 0, voltage: 0, loadFactor: 0, alert: "NORMAL" },
+    t105: { temperature: 0, voltage: 0, loadFactor: 0, alert: "NORMAL" },
+    t106: { temperature: 0, voltage: 0, loadFactor: 0, alert: "NORMAL" }
+  });
+  const [liveAlerts, setLiveAlerts] = useState([]);
   const [isDarkMode, setIsDarkMode]       = useState(true);
   const [currentTime, setCurrentTime]     = useState(new Date());
 
   // Centralized state
   const [nodes, setNodes] = useState([
-    { id: 't104', location: 'Sector 7G, Industrial Bay 4',       telemetry: 450, unit: 'kV', health: 'OPTIMAL',  status: 'ACTIVE',  trend: 'up'       },
-    { id: 't105', location: 'Cooling Tower 2, North Wing',       telemetry: 612, unit: 'kW', health: 'OVERHEAT', status: 'ALERT',   trend: 'up-fast'  },
-    { id: 't106', location: 'Main Generator Room',               telemetry: 588, unit: 'kV', health: 'STABLE',   status: 'ACTIVE',  trend: 'down'     },
+    { id: 't104', location: 'Cooling Tower 2, North Wing',    telemetry: 612, unit: 'kW', health: 'OPTIMAL', status: 'ACTIVE', trend: 'up-fast' },
+    { id: 't105', location: 'Sector 7G, Industrial Bay 4',   telemetry: 450, unit: 'kV', health: 'OPTIMAL', status: 'ACTIVE', trend: 'up'      },
+    { id: 't106', location: 'Main Generator Room',            telemetry: 588, unit: 'kV', health: 'OPTIMAL', status: 'ACTIVE', trend: 'down'    },
   ]);
 
   const [activities, setActivities] = useState([
@@ -56,6 +84,7 @@ function App() {
   const [showProfile,       setShowProfile]       = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [awsStatus,         setAwsStatus]         = useState('DISCONNECTED');
+  const [toasts,            setToasts]            = useState([]);
 
   // ─── Clock ──────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -68,6 +97,49 @@ function App() {
     document.documentElement.setAttribute('data-theme', isDarkMode ? 'dark' : 'light');
   }, [isDarkMode]);
 
+  // Derived application data for AnalyticsView based on current nodesData
+  const nodeCount = Object.keys(nodesData).length || 1;
+  const appDataMemo = Object.values(nodesData).reduce((acc, curr) => {
+    if (!curr) return acc;
+    acc.meanOilTemp  += (parseFloat(curr.temperature) || 0) / nodeCount;
+    acc.loadFactor   += (parseFloat(curr.loadFactor)  || 0);
+    acc.peakVoltage   = Math.max(acc.peakVoltage, parseFloat(curr.voltage) || 0);
+    acc.avgHealth    += (curr.healthScore || 0) / nodeCount;
+    if (curr.isAnomaly) acc.anomalyCount += 1;
+    return acc;
+  }, { meanOilTemp: 0, loadFactor: 0, peakVoltage: 0, avgHealth: 0, anomalyCount: 0 });
+
+  const finalAppData = {
+    ...appData,
+    ...appDataMemo
+  };
+
+  const nodesDataRef = useRef(nodesData);
+  useEffect(() => {
+    nodesDataRef.current = nodesData;
+  }, [nodesData]);
+
+  // Periodic chart update — always runs, uses ref for fresh data
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      setAppData(app => {
+        const currentNodes = nodesDataRef.current;
+        const totalLoadFactor = Object.values(currentNodes).reduce((sum, n) => sum + (parseFloat(n.loadFactor) || 0), 0);
+        const newTrend = [...app.trendData];
+        newTrend.shift();
+        newTrend.push({
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          phaseA: parseFloat(currentNodes['t104']?.voltage) || 0,
+          phaseB: parseFloat(currentNodes['t105']?.voltage) || 0,
+          phaseC: parseFloat(currentNodes['t106']?.voltage) || 0,
+          value: totalLoadFactor
+        });
+        return { ...app, trendData: newTrend };
+      });
+    }, 3000);
+    return () => clearInterval(intervalId);
+  }, []);
+
   // ─── Activity log helper ────────────────────────────────────────────────────
   const addActivity = useCallback((title, type = 'info') => {
     setActivities(prev => [
@@ -76,91 +148,242 @@ function App() {
     ]);
   }, []);
 
-  // ─── AWS IoT connection & Polling ───────────────────────────────────────────
+  const addToast = useCallback((title, type = 'info') => {
+    const id = Date.now() + Math.random();
+    setToasts(prev => [...prev, { id, title, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 5000);
+  }, []);
+
+  // ─── Alert tracker ref: tracks last-seen alert per node to prevent dedup locks ─
+  const alertTrackerRef = useRef({});
+
+  // ─── Health history refs (useRef to avoid re-render loops) ─────────────────
+  // Stores rolling array of up to 20 smoothed healthScore values per node
+  const healthHistoryRef = useRef({});
+  // Tracks previous anomaly state per node for notification deduplication
+  const anomalyStateRef  = useRef({});
+
+  // ─── AWS IoT connection & Polling ─────────────────────────────────────────────
   useEffect(() => {
-    // 1. Maintain SSE connection simply for connection status logging
+    let mockInterval = null;
+    const liveNodes = new Set();
+    const MOCK_NODES = ['t104', 't105', 't106'];
+
+    const startMock = () => {
+      if (mockInterval) return;
+      mockInterval = setInterval(() => {
+        MOCK_NODES.forEach(nodeId => {
+          if (liveNodes.has(nodeId)) return;
+
+          const tempAvg = 40 + Math.random() * 60;
+          const voltAvg = 210 + Math.random() * 25;
+          const loadAvg = 0.5 + Math.random() * 0.5;
+
+          const generateSubNode = (id, label) => ({
+            id, label,
+            temperature: tempAvg + (Math.random() * 10 - 5),
+            voltage: voltAvg + (Math.random() * 10 - 5),
+            current: 150 + Math.random() * 200,
+            loadFactor: Math.min(1, Math.max(0, loadAvg + (Math.random() * 0.2 - 0.1))),
+            signal: 50 + Math.random() * 50,
+          });
+
+          const subNodes = [
+            generateSubNode('A', 'Phase-A'),
+            generateSubNode('B', 'Phase-B'),
+            generateSubNode('C', 'Phase-C'),
+          ];
+
+          handleData({
+            nodeId,
+            temperature: tempAvg,
+            voltage:     voltAvg,
+            loadFactor:  loadAvg,
+            current:     150 + Math.random() * 200,
+            signal:      50  + Math.random() * 50,
+            subNodes,
+          });
+        });
+      }, 2000);
+    };
+
+    const stopMock = () => {
+      if (mockInterval) { clearInterval(mockInterval); mockInterval = null; }
+    };
+
+    const handleData = (data) => {
+      if (!data?.nodeId) return;
+
+      if (MOCK_NODES.includes(data.nodeId)) liveNodes.add(data.nodeId);
+
+      const tempAvg = parseFloat(data.temperature) || 0;
+      const voltAvg = parseFloat(data.voltage)     || 0;
+      const loadAvg = parseFloat(data.loadFactor)  || 0;
+
+      // ── Determine active alerts ────────────────────────────────────────────────
+      const alertParts = [];
+      if (tempAvg >= 85)        alertParts.push('CRITICAL_TEMP');
+      else if (tempAvg >= 75)   alertParts.push('HIGH_TEMP');
+      if (voltAvg < 210)        alertParts.push('UNDER_VOLTAGE');
+      else if (voltAvg > 235)   alertParts.push('HIGH_VOLTAGE');
+
+      let loadStatus = 'NORMAL';
+      if      (loadAvg >= 0.85) loadStatus = 'CRITICAL';
+      else if (loadAvg >= 0.75) loadStatus = 'HIGH';
+      else if (loadAvg >= 0.65) loadStatus = 'MODERATE';
+
+      const activeAlert = alertParts.length > 0 ? alertParts.join(', ') : 'NORMAL';
+
+      // ── Health scoring ─────────────────────────────────────────────────────────
+      const computeHealth = (d) => {
+        if (!d) return 0;
+        const tmp = parseFloat(d.temperature) || 0;
+        const vlt = parseFloat(d.voltage)     || 0;
+        const ldf = parseFloat(d.loadFactor)  || 0;
+        const tempScore    = Math.min(Math.max((tmp - 60) / 25, 0), 1);
+        const voltageScore = Math.min(Math.max(Math.abs(vlt - 220) / 20, 0), 1);
+        const loadScore    = Math.min(Math.max((ldf - 0.5) / 0.35, 0), 1);
+        return Number(Math.min(tempScore * 0.4 + voltageScore * 0.3 + loadScore * 0.3, 0.88).toFixed(3));
+      };
+
+      const subScores    = (data.subNodes || []).map(computeHealth);
+      const avgSubHealth = subScores.length > 0 ? subScores.reduce((a, b) => a + b, 0) / subScores.length : 0;
+      const mainHealth   = computeHealth(data);
+      const newScore     = subScores.length > 0 ? (mainHealth * 0.5) + (avgSubHealth * 0.5) : mainHealth;
+
+      // Read fresh data from ref
+      const prevNode          = nodesDataRef.current[data.nodeId] || {};
+      const prevHealthScore   = typeof prevNode.healthScore === 'number' ? prevNode.healthScore : 0;
+      const smoothedScore     = Number(((prevHealthScore * 0.7) + (newScore * 0.3)).toFixed(4));
+      const safeSmoothed      = isNaN(smoothedScore) ? 0 : smoothedScore;
+
+      let status = 'HEALTHY';
+      if      (safeSmoothed >= 0.88) status = 'CRITICAL';
+      else if (safeSmoothed >= 0.79) status = 'WARNING';
+
+      // ── Rolling health history (stored in ref, max 20 entries) ─────────────────
+      if (!healthHistoryRef.current[data.nodeId]) {
+        healthHistoryRef.current[data.nodeId] = [];
+      }
+      const nodeHistory = healthHistoryRef.current[data.nodeId];
+      nodeHistory.push(safeSmoothed);
+      if (nodeHistory.length > 20) nodeHistory.shift();
+      // Safe snapshot copy for state (plain array, no circular refs)
+      const historySnapshot = [...nodeHistory];
+
+      // ── Anomaly detection ──────────────────────────────────────────────────────
+      const { isAnomaly, anomalyReason } = detectAnomaly(nodeHistory, safeSmoothed);
+
+      // ── Anomaly notification — fire only on false → true transition ────────────
+      const prevIsAnomaly = anomalyStateRef.current[data.nodeId] ?? false;
+      if (isAnomaly && !prevIsAnomaly) {
+        anomalyStateRef.current[data.nodeId] = true;
+        addToast(`AI Alert: Node ${data.nodeId} shows unusual health trend`, 'anomaly');
+        addActivity(`AI Anomaly on ${data.nodeId}: ${anomalyReason}`, 'warning');
+        if (Notification.permission === 'granted') {
+          try {
+            new Notification(`AI Alert: Node ${data.nodeId}`, {
+              body: `${anomalyReason}`,
+            });
+          } catch (_) {}
+        }
+      } else if (!isAnomaly) {
+        anomalyStateRef.current[data.nodeId] = false;
+      }
+
+      const prevSubHealth = prevNode.subNodeHealth || { A: { healthScore: 0 }, B: { healthScore: 0 }, C: { healthScore: 0 } };
+      const smoothSub = (prevS, currS) => {
+        const s = (prevS * 0.7) + ((typeof currS === 'number' && !isNaN(currS) ? currS : 0) * 0.3);
+        return isNaN(s) ? 0 : Number(s.toFixed(4));
+      };
+
+      // ── Update node data ───────────────────────────────────────────────────────
+      setNodesData(prev => ({
+        ...prev,
+        [data.nodeId]: {
+          ...(prev[data.nodeId] || {}),
+          location:      data.location ?? prev[data.nodeId]?.location ?? 'Unknown',
+          temperature:   tempAvg,
+          voltage:       voltAvg,
+          loadFactor:    loadAvg,
+          current:       parseFloat(data.current) || prev[data.nodeId]?.current || 0,
+          signal:        parseFloat(data.signal)  || prev[data.nodeId]?.signal  || 95,
+          healthScore:   safeSmoothed,
+          status,
+          loadStatus,
+          isAnomaly,
+          anomalyReason,
+          healthHistory: historySnapshot,
+          subNodeHealth: {
+            A: { ...(data.subNodes?.[0] || {}), healthScore: smoothSub(prevSubHealth.A?.healthScore ?? 0, subScores[0]) },
+            B: { ...(data.subNodes?.[1] || {}), healthScore: smoothSub(prevSubHealth.B?.healthScore ?? 0, subScores[1]) },
+            C: { ...(data.subNodes?.[2] || {}), healthScore: smoothSub(prevSubHealth.C?.healthScore ?? 0, subScores[2]) },
+          },
+          alert: activeAlert,
+        },
+      }));
+
+      // ── Live alert stream — time-window dedup (5 s per node+alert combo) ───────
+      const alertKey = `${data.nodeId}::${activeAlert}::${status}`;
+      const now = Date.now();
+      const lastSeen = alertTrackerRef.current[alertKey] || 0;
+      const isNonNormal = activeAlert !== 'NORMAL' || status === 'WARNING' || status === 'CRITICAL';
+
+      if (isNonNormal && (now - lastSeen > 5000)) {
+        alertTrackerRef.current[alertKey] = now;
+
+        const alertToLog = (status === 'WARNING' || status === 'CRITICAL')
+          ? `Status: ${status} | ${activeAlert}`
+          : activeAlert;
+
+        setLiveAlerts(prev => {
+          const newAlert = {
+            id:     now + Math.random(),
+            nodeId: data.nodeId,
+            alert:  alertToLog,
+            time:   new Date().toLocaleTimeString(),
+          };
+          return [newAlert, ...prev].slice(0, 20);
+        });
+
+        addToast(`[${data.nodeId}] ${alertToLog}`, 'warning');
+        addActivity(`Alert from ${data.nodeId}: ${alertToLog}`, 'warning');
+
+        // Browser notification
+        if (Notification.permission === 'granted') {
+          try {
+            new Notification(`Alert: ${data.nodeId}`, {
+              body: `Node ${data.nodeId}: ${alertToLog}`,
+            });
+          } catch (_) {}
+        } else if (Notification.permission !== 'denied') {
+          Notification.requestPermission();
+        }
+      }
+    };
+
     const connection = connectAWS(
-      (incoming) => {
-        console.log('LIVE AWS DATA:', incoming);
-        // We log incoming data to satisfy the requirement
-      },
-      (status) => {
-        setAwsStatus(status);
-        if (status === 'CONNECTED') {
+      handleData,
+      (connStatus) => {
+        setAwsStatus(connStatus);
+        if (connStatus === 'CONNECTED') {
           addActivity('Secure Link Established with AWS IoT Core', 'system');
-        } else if (status === 'DISCONNECTED') {
+        } else if (connStatus === 'DISCONNECTED') {
           addActivity('MQTT Connection Closed', 'warning');
+          liveNodes.clear();
         }
       }
     );
 
-    // 2. Poll the /data endpoint for live multi-node states
-    const fetchNodes = async () => {
-      try {
-        const res = await fetch('http://localhost:3001/data');
-        if (res.ok) {
-          const fetchedData = await res.json();
-          setNodesData(fetchedData);
-
-          // Derive global analytics from nodesData
-          setAppData(prev => {
-            const nodeVals = Object.values(fetchedData);
-            if (nodeVals.length === 0) return prev;
-
-            const avgCurrent = nodeVals.reduce((acc, n) => acc + parseFloat(n.current || 0), 0) / nodeVals.length;
-            const maxVoltage = Math.max(...nodeVals.map(n => parseFloat(n.voltage || 0)));
-            const avgTemp = nodeVals.reduce((acc, n) => acc + parseFloat(n.temperature || 0), 0) / nodeVals.length;
-            const avgSignal = nodeVals.reduce((acc, n) => acc + parseFloat(n.signal || 0), 0) / nodeVals.length;
-
-            const newPoint = {
-              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-              phaseA: maxVoltage || 0,
-              phaseB: (maxVoltage || 0) * 0.98,
-              phaseC: (maxVoltage || 0) * 1.02,
-              value: avgCurrent || 0,
-            };
-
-            return {
-              ...prev,
-              loadFactor: avgCurrent,
-              peakVoltage: maxVoltage,
-              meanOilTemp: avgTemp,
-              signalStrength: avgSignal,
-              trendData: [...(prev.trendData || []).slice(-23), newPoint],
-            };
-          });
-
-          // Sync individual nodes list for NodesView
-          setNodes(prevNodes => prevNodes.map(n => {
-             const live = fetchedData[n.id];
-             if (live) {
-                return {
-                   ...n,
-                   telemetry: Math.round(parseFloat(live.voltage)),
-                   health: parseFloat(live.temperature) > 75 ? 'OVERHEAT' : 'OPTIMAL',
-                   status: 'ACTIVE',
-                };
-             }
-             return n;
-          }));
-
-        }
-      } catch (err) {
-        console.error('Fetch error:', err);
-      }
-    };
-    
-    // Initial fetch and interval
-    fetchNodes();
-    const interval = setInterval(fetchNodes, 5000);
+    startMock();
 
     return () => {
-      if (connection && connection.disconnect) {
-        connection.disconnect();
-      }
-      clearInterval(interval);
+      if (connection?.disconnect) connection.disconnect();
+      stopMock();
     };
-  }, [addActivity]);
+  }, [addActivity, addToast]);
 
   // ─── Node helpers ───────────────────────────────────────────────────────────
   const addNode = useCallback((newNode) => {
@@ -349,11 +572,38 @@ ACTIVE NODES: ${nodes.filter(n => n.status === 'ACTIVE').length}
 
         <div className="content-area" style={{ paddingTop: (isNodesPage || isDashboardPage || isAwsPage) ? '0' : '2rem' }}>
           <Routes>
-            <Route path="/" element={<NodesView nodes={nodes} onAddNode={addNode} onRemoveNode={removeNode} activities={activities} onExportCSV={(data) => exportCSV(data, 'Nodes_Network')} awsStatus={awsStatus} />} />
+            <Route path="/" element={<NodesView nodesData={nodesData} liveAlerts={liveAlerts} />} />
             <Route path="/node/:id" element={<NodePage nodesData={nodesData} awsStatus={awsStatus} />} />
-            <Route path="/analytics" element={<AnalyticsView data={appData} onExportCSV={(data, name) => exportCSV(data, name)} onFullReport={() => generateFullReport('analytics')} awsStatus={awsStatus} />} />
-            <Route path="/aws" element={<AWSIoTView awsStatus={awsStatus} setAwsStatus={setAwsStatus} appData={appData} />} />
+            <Route path="/analytics" element={<AnalyticsView data={finalAppData} onExportCSV={(data, name) => exportCSV(data, name)} onFullReport={() => generateFullReport('analytics')} awsStatus={awsStatus} />} />
+            <Route path="/aws" element={<AWSIoTView awsStatus={awsStatus} setAwsStatus={setAwsStatus} appData={finalAppData} />} />
           </Routes>
+        </div>
+
+        {/* Toast Notifications container */}
+        <div style={{ position: 'fixed', bottom: '2rem', right: '2rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', zIndex: 9999 }}>
+          {toasts.map(toast => (
+            <div key={toast.id} className={`panel-card toast-enter${toast.type === 'anomaly' ? ' toast-anomaly' : ''}`} style={{
+               minWidth: '250px', padding: '1.25rem',
+               backgroundColor: 'var(--panel-bg)',
+               border: '1px solid var(--panel-border)',
+               borderLeft: `4px solid ${
+                 toast.type === 'anomaly'  ? 'var(--accent-purple)' :
+                 toast.type === 'warning'  ? 'var(--accent-red)'    :
+                 'var(--status-optimal)'
+               }`,
+               boxShadow: toast.type === 'anomaly'
+                 ? '0 8px 32px rgba(168,85,247,0.25)'
+                 : '0 8px 32px rgba(0,0,0,0.4)',
+               animation: 'slideInRight 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                {toast.type === 'anomaly' ? '🤖 AI ANOMALY ALERT' : toast.type === 'warning' ? '🚨 CRITICAL ALERT' : 'ℹ️ SYSTEM MESSAGE'}
+              </div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.5rem', lineHeight: '1.4' }}>
+                {toast.title}
+              </div>
+            </div>
+          ))}
         </div>
       </main>
     </div>

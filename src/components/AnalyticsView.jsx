@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { Activity, Zap, Thermometer, ArrowUpRight, Copy, AlertTriangle, Download } from 'lucide-react';
+import { Activity, Zap, Thermometer, ArrowUpRight, Copy, AlertTriangle, Download, Brain } from 'lucide-react';
 
 const CustomTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
@@ -13,11 +13,15 @@ const CustomTooltip = ({ active, payload, label }) => {
         boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
       }}>
         <p style={{ color: 'var(--text-secondary)', marginBottom: '0.5rem', fontSize: '0.875rem' }}>{label}</p>
-        {payload.map((entry, index) => (
-           <p key={index} style={{ color: entry.color, fontWeight: 600, fontSize: '0.875rem' }}>
-            Phase {entry.name === 'phaseA' ? 'A' : entry.name === 'phaseB' ? 'B' : 'C'}: {entry.value.toFixed(1)}kV
-          </p>
-        ))}
+        {payload.map((entry, index) => {
+          const phaseLabel = entry.name === 'phaseA' ? 'A' : entry.name === 'phaseB' ? 'B' : 'C';
+          const val = typeof entry.value === 'number' ? entry.value.toFixed(1) : '—';
+          return (
+            <p key={index} style={{ color: entry.color, fontWeight: 600, fontSize: '0.875rem' }}>
+              Phase {phaseLabel}: {val}kV
+            </p>
+          );
+        })}
       </div>
     );
   }
@@ -116,6 +120,29 @@ const AnalyticsView = ({ data, onExportCSV, onFullReport, awsStatus }) => {
             ))}
           </div>
         </div>
+
+        {/* AI Health Summary KPI */}
+        <div className="panel-card kpi-card" style={{ 
+          border: data.anomalyCount > 0 ? '1px solid #a855f7' : '1px solid var(--panel-border)',
+          background: data.anomalyCount > 0 ? 'rgba(168, 85, 247, 0.05)' : 'var(--panel-bg)'
+        }}>
+          <div className="kpi-header">
+            <span className="kpi-title">AI System Risk Index</span>
+            <Brain size={16} color="#a855f7" />
+          </div>
+          <div className="kpi-value" style={{ color: data.anomalyCount > 0 ? '#a855f7' : '#10b981' }}>
+            {(data.avgHealth || 0).toFixed(3)}
+          </div>
+          <div className="kpi-trend" style={{ color: data.anomalyCount > 0 ? '#ef4444' : 'var(--text-secondary)' }}>
+            {data.anomalyCount > 0 ? (
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                <AlertTriangle size={14} /> {data.anomalyCount} Active Anomalies
+              </span>
+            ) : (
+              <span>All patterns nominal</span>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Main Chart */}
@@ -211,6 +238,15 @@ const AnalyticsView = ({ data, onExportCSV, onFullReport, awsStatus }) => {
                 dataKey="phaseB"
                 stroke="var(--text-muted)"
                 strokeDasharray="5 5"
+                strokeWidth={2}
+                fillOpacity={0}
+                isAnimationActive={false}
+              />
+              <Area
+                type="monotone"
+                dataKey="phaseC"
+                stroke="var(--accent-cyan)"
+                strokeDasharray="3 3"
                 strokeWidth={2}
                 fillOpacity={0}
                 isAnimationActive={false}

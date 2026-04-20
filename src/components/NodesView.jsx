@@ -1,263 +1,360 @@
-import React, { useState } from 'react';
-import { Plus, PowerOff, AlertTriangle, Zap, X } from 'lucide-react';
+import React from 'react';
+import { Link } from 'react-router-dom';
+import { AnomalyBadge, Sparkline } from './AnomalyUI';
+import { LayoutDashboard, AlertCircle, Zap, Thermometer, Activity, Signal, Cpu, Brain } from 'lucide-react';
 
-const NodesView = ({ nodes, onAddNode, onRemoveNode, onExportCSV, activities, awsStatus }) => {
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [formData, setFormData] = useState({
-    id: '',
-    location: '',
-    telemetry: '',
-    status: 'ACTIVE'
-  });
+// ─── Alert badge helpers ─────────────────────────────────────────────────────
+const getAlertBadgeStyle = (alert) => {
+  if (!alert || alert === 'NORMAL') {
+    return { bg: 'rgba(16, 185, 129, 0.1)', color: '#10b981', border: 'rgba(16, 185, 129, 0.2)', blink: false };
+  }
+  if (alert.includes('CRITICAL_TEMP') || alert.includes('HIGH_TEMP')) {
+    return { bg: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: 'rgba(239, 68, 68, 0.2)', blink: alert.includes('CRITICAL_TEMP') };
+  }
+  if (alert.includes('UNDER_VOLTAGE') || alert.includes('HIGH_VOLTAGE')) {
+    return { bg: 'rgba(249, 115, 22, 0.1)', color: '#f97316', border: 'rgba(249, 115, 22, 0.2)', blink: false };
+  }
+  if (alert.includes('OVERLOAD')) {
+    return { bg: 'rgba(168, 85, 247, 0.1)', color: '#a855f7', border: 'rgba(168, 85, 247, 0.2)', blink: false };
+  }
+  return { bg: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: 'rgba(239, 68, 68, 0.2)', blink: false };
+};
 
-  const totalNodes = nodes.length;
-  const activeNodes = nodes.filter(n => n.status === 'ACTIVE').length;
-  const warningNodes = nodes.filter(n => n.health === 'OVERHEAT').length;
-  const uptimePercent = totalNodes > 0 ? Math.round((activeNodes / totalNodes) * 100) : 0;
+const getAlertBorderColor = (alert) => {
+  if (!alert) return '#ef4444';
+  if (alert.includes('CRITICAL_TEMP') || alert.includes('HIGH_TEMP')) return '#ef4444';
+  if (alert.includes('UNDER_VOLTAGE') || alert.includes('HIGH_VOLTAGE')) return '#f97316';
+  if (alert.includes('OVERLOAD')) return '#a855f7';
+  return '#ef4444';
+};
 
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-  };
+const fmt = (val, decimals = 1) => {
+  if (val === null || val === undefined || isNaN(parseFloat(val))) return '—';
+  return parseFloat(val).toFixed(decimals);
+};
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!formData.id || !formData.telemetry) return;
+const NODE_LABELS = {
+  t104: { location: 'Cooling Tower 2, North Wing' },
+  t105: { location: 'Sector 7G, Industrial Bay 4' },
+  t106: { location: 'Main Generator Room' },
+};
 
-    const newNode = {
-      id: formData.id,
-      location: formData.location || 'Unknown Location',
-      telemetry: parseInt(formData.telemetry),
-      unit: 'kV',
-      health: parseInt(formData.telemetry) > 600 ? 'OVERHEAT' : 'OPTIMAL',
-      status: formData.status,
-      trend: Math.random() > 0.5 ? 'up' : 'down'
-    };
+// ─── Telemetry metric row ────────────────────────────────────────────────────
+const MetricRow = ({ icon: Icon, label, value, unit, color = '#93c5fd' }) => (
+  <div style={{
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    backgroundColor: 'var(--panel-bg-hover)', padding: '0.65rem 0.75rem',
+    borderRadius: 'var(--radius-sm)',
+  }}>
+    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+      <Icon size={14} color={color} /> {label}
+    </span>
+    <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+      {value} <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{unit}</span>
+    </span>
+  </div>
+);
 
-    onAddNode(newNode);
-    setIsModalOpen(false);
-    setFormData({ id: '', location: '', telemetry: '', status: 'ACTIVE' });
-  };
+// ─── Main view ───────────────────────────────────────────────────────────────
+const NodesView = ({ nodesData, liveAlerts }) => {
+  const nodeKeys = ['t104', 't105', 't106'];
+
+  const safeNodesData  = nodesData  || {};
+  const safeLiveAlerts = liveAlerts || [];
 
   return (
-    <div className="nodes-view" style={{ padding: '0', display: 'flex', flexDirection: 'column', gap: '1.5rem', position: 'relative' }}>
-      
-      {/* Add Node Modal */}
-      {isModalOpen && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 1000
-        }}>
-          <div className="panel-card" style={{ 
-            width: '400px', padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.5rem',
-            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4)'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Provision New Node</h3>
-              <button onClick={() => setIsModalOpen(false)} className="icon-btn"><X size={20} /></button>
-            </div>
-
-            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>NODE IDENTITY</label>
-                <input 
-                  type="text" name="id" value={formData.id} onChange={handleInputChange}
-                  placeholder="e.g. TR-9902-X" required
-                  style={{ backgroundColor: 'var(--panel-bg-hover)', border: '1px solid var(--panel-border)', padding: '0.75rem', borderRadius: '4px', color: 'var(--text-primary)' }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>LOCATION</label>
-                <input 
-                  type="text" name="location" value={formData.location} onChange={handleInputChange}
-                  placeholder="e.g. Sector 7G, Bay 4"
-                  style={{ backgroundColor: 'var(--panel-bg-hover)', border: '1px solid var(--panel-border)', padding: '0.75rem', borderRadius: '4px', color: 'var(--text-primary)' }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>TELEMETRY (kV)</label>
-                <input 
-                  type="number" name="telemetry" value={formData.telemetry} onChange={handleInputChange}
-                  placeholder="Current value" required
-                  style={{ backgroundColor: 'var(--panel-bg-hover)', border: '1px solid var(--panel-border)', padding: '0.75rem', borderRadius: '4px', color: 'var(--text-primary)' }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>INITIAL STATUS</label>
-                <select 
-                  name="status" value={formData.status} onChange={handleInputChange}
-                  style={{ backgroundColor: 'var(--panel-bg-hover)', border: '1px solid var(--panel-border)', padding: '0.75rem', borderRadius: '4px', color: 'var(--text-primary)' }}
-                >
-                  <option value="ACTIVE">ACTIVE</option>
-                  <option value="STANDBY">STANDBY</option>
-                  <option value="ALERT">ALERT</option>
-                </select>
-              </div>
-
-              <button type="submit" className="btn-primary" style={{ marginTop: '0.5rem', padding: '0.75rem' }}>
-                ADD NODE TO NETWORK
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Top Cards Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '1.25rem' }}>
-        <div className="panel-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', position: 'relative' }}>
-          <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 600, letterSpacing: '0.5px' }}>TOTAL NODES</div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-            <span style={{ fontSize: '2.5rem', fontWeight: 300, color: 'var(--text-primary)' }}>{totalNodes}</span>
-            <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 600 }}>UNIT-A</span>
-          </div>
-        </div>
-        
-        <div className="panel-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', position: 'relative' }}>
-          <div style={{ position: 'absolute', top: '1.5rem', right: '1.5rem', width: 6, height: 6, borderRadius: '50%', backgroundColor: 'var(--accent-blue)' }}></div>
-          <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 600, letterSpacing: '0.5px' }}>ACTIVE NODES</div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-            <span style={{ fontSize: '2.5rem', fontWeight: 300, color: 'var(--text-primary)' }}>{activeNodes}</span>
-            <span style={{ color: 'var(--accent-blue)', fontSize: '0.8rem', fontWeight: 600 }}>{uptimePercent}% UP</span>
-          </div>
-        </div>
-
-        <div className="panel-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', position: 'relative' }}>
-           <div style={{ position: 'absolute', top: '1.5rem', right: '1.5rem', width: 6, height: 6, borderRadius: '50%', backgroundColor: 'var(--status-overheat)' }}></div>
-          <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontWeight: 600, letterSpacing: '0.5px' }}>NODES IN WARNING</div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-            <span style={{ fontSize: '2.5rem', fontWeight: 300, color: 'var(--status-overheat)' }}>{warningNodes}</span>
-            <span style={{ color: 'var(--status-overheat)', fontSize: '0.8rem', fontWeight: 600 }}>CRITICAL</span>
-          </div>
-        </div>
-
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          style={{ 
-            background: 'linear-gradient(135deg, #60a5fa 0%, #2563eb 100%)', 
-            border: 'none', borderRadius: 'var(--radius-lg)', color: 'white',
-            display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
-            gap: '0.5rem', cursor: 'pointer', transition: 'filter 0.2s', padding: '1rem'
-          }} className="table-row-hover">
-          <div style={{ width: 32, height: 32, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Plus size={18} strokeWidth={2} />
-          </div>
-          <span style={{ fontSize: '0.875rem', fontWeight: 600, letterSpacing: '0.5px' }}>ADD NEW NODE</span>
-        </button>
-      </div>
-
-      {/* Network List Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
-        <h3 style={{ fontSize: '1.25rem', fontWeight: 500, display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
-          Transformer Network <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', fontWeight: 400 }}>Active Session: 2.4.0</span>
-          {awsStatus === 'CONNECTED' && (
-            <span style={{ color: '#10b981', fontSize: '0.75rem', fontWeight: 700, marginLeft: '1rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-              <Zap size={14} fill="#10b981" /> CLOUD LINK ACTIVE
-            </span>
-          )}
+    <div className="nodes-view" style={{ padding: '0', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+      {/* ─── Header ─────────────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h3 style={{ fontSize: '1.25rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <LayoutDashboard size={22} /> Multi-Node Monitoring
         </h3>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button style={{ backgroundColor: 'var(--panel-bg-hover)', color: 'var(--text-secondary)', border: '1px solid var(--panel-border)', padding: '0.5rem 1rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}>FILTER</button>
-          <button onClick={() => onExportCSV(nodes)} style={{ backgroundColor: 'var(--panel-bg-hover)', color: 'var(--text-secondary)', border: '1px solid var(--panel-border)', padding: '0.5rem 1rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}>EXPORT CSV</button>
-        </div>
+        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+          {nodeKeys.length} nodes active • click a card to view full telemetry
+        </span>
       </div>
 
-      {/* Network List Items */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', backgroundColor: 'var(--bg-color)' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 0.5fr', padding: '0 1.5rem 0.75rem', color: 'var(--text-secondary)', fontSize: '0.65rem', fontWeight: 600, letterSpacing: '1px', textTransform: 'uppercase' }}>
-          <div>NODE IDENTITY & LOCATION</div>
-          <div>TELEMETRY</div>
-          <div>HEALTH</div>
-          <div>STATUS</div>
-          <div style={{ textAlign: 'right' }}>ACTIONS</div>
-        </div>
+      {/* ─── NODE TELEMETRY CARDS ──────────────────────────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.5rem' }}>
+        {nodeKeys.map(nodeId => {
+          const data        = safeNodesData[nodeId] || {};
+          const alert       = data.alert || 'NORMAL';
+          const badgeStyle  = getAlertBadgeStyle(alert);
+          const hasData     = !!(data.temperature || data.voltage);
+          const location    = NODE_LABELS[nodeId]?.location || '';
 
-        {nodes.map((node) => (
-          <div key={node.id} className="panel-card" style={{ padding: '1.25rem 1.5rem', display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 0.5fr', alignItems: 'center', borderRadius: 'var(--radius-md)' }}>
-            
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
-              <div style={{ width: 40, height: 40, backgroundColor: 'var(--panel-bg-hover)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {node.health === 'OVERHEAT' ? <AlertTriangle size={20} color="#fca5a5"/> : node.health === 'OFFLINE' ? <PowerOff size={20} color="var(--text-muted)"/> : <Zap size={20} color="#93c5fd"/>}
-              </div>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: '1rem', letterSpacing: '0.5px' }}>{node.id}</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>{node.location}</div>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: '2px' }}>
-                <span style={{ fontSize: '1.1rem', fontWeight: 600, color: node.health === 'OVERHEAT' ? '#fca5a5' : node.health === 'OFFLINE' ? 'var(--text-muted)' : '#93c5fd' }}>
-                  {node.telemetry === 0 ? '000' : node.telemetry}
-                </span>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}> {node.unit}</span>
-              </div>
-              <svg width="40" height="12" viewBox="0 0 40 12" style={{ opacity: node.health === 'OFFLINE' ? 0.1 : 1 }}>
-                <path d={
-                    node.trend === 'up' ? "M0,10 Q10,12 20,6 T40,2" :
-                    node.trend === 'up-fast' ? "M0,12 Q10,10 20,8 T40,0" :
-                    node.trend === 'down' ? "M0,2 Q10,0 20,4 T40,10" :
-                    "M0,6 L40,6"
-                } fill="none" stroke={node.health === 'OVERHEAT' ? '#fca5a5' : node.health === 'OFFLINE' ? 'var(--text-muted)' : '#93c5fd'} strokeWidth="1.5" />
-              </svg>
-            </div>
-
-            <div>
-              <span style={{ 
-                display: 'inline-block', padding: '0.25rem 0.5rem', borderRadius: '4px', fontSize: '0.65rem', fontWeight: 600, letterSpacing: '0.5px',
-                color: node.health === 'OVERHEAT' ? '#fca5a5' : node.health === 'OFFLINE' ? 'var(--text-muted)' : '#93c5fd',
-                backgroundColor: node.health === 'OVERHEAT' ? 'rgba(239, 68, 68, 0.1)' : node.health === 'OFFLINE' ? 'rgba(100, 116, 139, 0.1)' : 'rgba(59, 130, 246, 0.1)',
-                border: `1px solid ${node.health === 'OVERHEAT' ? 'rgba(239, 68, 68, 0.2)' : node.health === 'OFFLINE' ? 'rgba(100, 116, 139, 0.2)' : 'rgba(59, 130, 246, 0.2)'}`
-              }}>
-                {node.health}
-              </span>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-              <div style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: node.status === 'ALERT' ? '#f87171' : node.status === 'STANDBY' ? 'var(--text-muted)' : 'var(--text-primary)' }}></div>
-              {node.status}
-            </div>
-
-            <div style={{ textAlign: 'right' }}>
-              <button 
-                onClick={() => onRemoveNode(node.id)}
-                style={{ color: 'var(--text-secondary)', hover: 'var(--accent-red)', padding: '0.5rem' }}
+          return (
+            <Link key={nodeId} to={`/node/${nodeId}`} style={{ textDecoration: 'none' }}>
+              <div
+                className="panel-card"
+                style={{
+                  padding: '1.25rem',
+                  display: 'flex', flexDirection: 'column', gap: '0.75rem',
+                  border: badgeStyle.blink ? '1px solid #ef4444' : '1px solid var(--panel-border)',
+                  cursor: 'pointer',
+                  transition: 'border-color 0.2s, box-shadow 0.2s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 0 0 1px rgba(59,130,246,0.3)'; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = badgeStyle.blink ? '#ef4444' : 'var(--panel-border)'; e.currentTarget.style.boxShadow = 'none'; }}
               >
-                <PowerOff size={16} />
-              </button>
-            </div>
-          </div>
-        ))}
+                {/* Header */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      Node {nodeId.toUpperCase()}
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                      {location}
+                    </div>
+                  </div>
+                  <span
+                    className={badgeStyle.blink ? 'blink-animation' : ''}
+                    style={{
+                      padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.62rem', fontWeight: 700,
+                      backgroundColor: badgeStyle.bg, color: badgeStyle.color, border: `1px solid ${badgeStyle.border}`,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {alert}
+                  </span>
+                </div>
+
+                {/* Status dot */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <span style={{
+                    width: 6, height: 6, borderRadius: '50%',
+                    backgroundColor: hasData ? '#10b981' : '#64748b',
+                    display: 'inline-block',
+                    boxShadow: hasData ? '0 0 6px #10b981' : 'none',
+                  }} />
+                  <span style={{ fontSize: '0.65rem', color: hasData ? '#10b981' : 'var(--text-muted)' }}>
+                    {hasData ? 'RECEIVING DATA' : 'WAITING FOR DATA'}
+                  </span>
+                </div>
+
+                {/* Metrics */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                  <MetricRow icon={Thermometer} label="TOP OIL TEMP"    value={fmt(data.temperature, 1)} unit="°C"  color={parseFloat(data.temperature) > 75 ? '#ef4444' : '#f97316'} />
+                  <MetricRow icon={Zap}         label="VOLTAGE OUTPUT"  value={fmt(data.voltage, 1)}     unit="kV"  color="#60a5fa" />
+                  <MetricRow icon={Cpu}         label="CURRENT LOAD"    value={fmt(data.current, 1)}     unit="A"   color="#a78bfa" />
+                  <MetricRow icon={Activity}    label="LOAD FACTOR"     value={fmt(data.loadFactor, 2)}  unit=""    color="#34d399" />
+                  <MetricRow icon={Signal}      label="SIGNAL STRENGTH" value={fmt(data.signal ?? (hasData ? 95 : null), 0)} unit="dBm" color="#94a3b8" />
+                </div>
+              </div>
+            </Link>
+          );
+        })}
       </div>
 
-      {/* Bottom Display Area */}
-      <div style={{ marginTop: '1rem' }}>
-        
-        {/* Recent Activity */}
-        <div className="panel-card" style={{ padding: '1.5rem' }}>
-          <h3 style={{ fontSize: '0.75rem', fontWeight: 600, letterSpacing: '1px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '1.25rem' }}>RECENT ACTIVITY</h3>
-          
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            {activities.slice(0, 5).map((activity) => (
-              <div key={activity.id} style={{ display: 'flex', gap: '0.75rem' }}>
-                <div style={{ width: 2, backgroundColor: activity.type === 'warning' ? '#f87171' : '#60a5fa', borderRadius: 2 }}></div>
-                <div>
-                  <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)' }}>{activity.title}</div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{activity.time}</div>
+      {/* ─── SYSTEM HEALTH DASHBOARD ────────────────────────────────────────── */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '0.5rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Brain size={22} color="#a855f7" /> System Health Dashboard
+          </h3>
+          <span style={{ fontSize: '0.7rem', color: '#a855f7', backgroundColor: 'rgba(168,85,247,0.1)', border: '1px solid rgba(168,85,247,0.25)', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>
+            AI Anomaly Detection Active
+          </span>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.5rem' }}>
+          {nodeKeys.map(nodeId => {
+            const data         = safeNodesData[nodeId] || {};
+            const healthScore  = typeof data.healthScore === 'number' && !isNaN(data.healthScore) ? data.healthScore : 0;
+            const status       = data.status       || 'HEALTHY';
+            const isAnomaly    = data.isAnomaly    || false;
+            const anomalyReason = data.anomalyReason || '';
+            const healthHistory = Array.isArray(data.healthHistory) ? data.healthHistory : [];
+            const location     = data.location || NODE_LABELS[nodeId]?.location || 'Unknown';
+            const subHealth    = data.subNodeHealth || {
+              A: { healthScore: 0 },
+              B: { healthScore: 0 },
+              C: { healthScore: 0 },
+            };
+
+            const statusColors = {
+              HEALTHY:  { bg: 'rgba(16, 185, 129, 0.1)',  color: '#10b981', border: 'rgba(16, 185, 129, 0.2)'  },
+              WARNING:  { bg: 'rgba(249, 115, 22, 0.1)',  color: '#f97316', border: 'rgba(249, 115, 22, 0.2)'  },
+              CRITICAL: { bg: 'rgba(239, 68, 68, 0.1)',   color: '#ef4444', border: 'rgba(239, 68, 68, 0.2)'   },
+            };
+
+            const sColor       = statusColors[status] || statusColors.HEALTHY;
+            const healthPercent = Math.min(100, Math.max(0, healthScore * 100));
+
+            const barGradient = healthScore > 0.6
+              ? 'linear-gradient(90deg, #10b981 0%, #f97316 30%, #ef4444 100%)'
+              : healthScore > 0.3
+              ? 'linear-gradient(90deg, #10b981 0%, #f97316 100%)'
+              : '#10b981';
+
+            const getPhaseStatus = (score) => {
+              if (score > 0.6) return { label: 'CRITICAL', color: '#ef4444', icon: '🔴' };
+              if (score > 0.3) return { label: 'WARNING',  color: '#f97316', icon: '🟠' };
+              return              { label: 'OK',       color: '#10b981', icon: '🟢' };
+            };
+
+            // Card border & shadow — anomaly layered on top of status styling
+            const cardBorderColor = isAnomaly
+              ? '#a855f7'
+              : status === 'CRITICAL'
+              ? '#ef4444'
+              : 'var(--panel-border)';
+
+            const cardBoxShadow = isAnomaly
+              ? '0 0 0 1px rgba(168,85,247,0.4), 0 0 18px rgba(168,85,247,0.2)'
+              : status === 'CRITICAL'
+              ? '0 0 10px rgba(239,68,68,0.18)'
+              : 'none';
+
+            return (
+              <div
+                key={`health-${nodeId}`}
+                className="panel-card"
+                style={{
+                  padding: '1.25rem',
+                  display: 'flex', flexDirection: 'column', gap: '1rem',
+                  border: `1px solid ${cardBorderColor}`,
+                  boxShadow: cardBoxShadow,
+                  transition: 'border-color 0.3s, box-shadow 0.3s',
+                }}
+              >
+                {/* ── Card Header ── */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      Node {nodeId.toUpperCase()}
+                    </div>
+                    <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginTop: '0.15rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {location}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem' }}>
+                    {/* Status badge */}
+                    <span
+                      className={status === 'CRITICAL' ? 'blink-animation' : ''}
+                      style={{ padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.62rem', fontWeight: 700, backgroundColor: sColor.bg, color: sColor.color, border: `1px solid ${sColor.border}`, whiteSpace: 'nowrap' }}
+                    >
+                      {status}
+                    </span>
+                    {/* AI Anomaly badge */}
+                    {isAnomaly && <AnomalyBadge />}
+                  </div>
                 </div>
+
+                {/* ── Anomaly Reason ── */}
+                {isAnomaly && anomalyReason && (
+                  <div style={{
+                    fontSize: '0.68rem',
+                    color: '#c084fc',
+                    backgroundColor: 'rgba(168,85,247,0.08)',
+                    border: '1px solid rgba(168,85,247,0.2)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '0.4rem 0.6rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    fontStyle: 'italic',
+                  }}>
+                    <Brain size={11} color="#a855f7" />
+                    {anomalyReason}
+                  </div>
+                )}
+
+                {/* ── Health Score Bar ── */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '0.4rem' }}>
+                    <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Overall Risk Score</span>
+                    <span style={{ fontWeight: 700, color: sColor.color }}>{healthScore.toFixed(3)}</span>
+                  </div>
+                  <div style={{ width: '100%', height: '8px', backgroundColor: 'var(--panel-bg-hover)', borderRadius: '4px', overflow: 'hidden' }}>
+                    <div style={{ width: `${healthPercent}%`, height: '100%', background: barGradient, borderRadius: '4px', transition: 'width 0.5s ease-out' }} />
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.55rem', color: 'var(--text-muted)', marginTop: '0.35rem', fontWeight: 600 }}>
+                    <span style={{ color: '#10b981' }}>0.0 ───────</span>
+                    <span style={{ color: '#f97316' }}>0.3 ───────</span>
+                    <span style={{ color: '#ef4444' }}>0.6 ───────</span>
+                    <span>1.0</span>
+                  </div>
+                </div>
+
+                {/* ── Sparkline Trend ── */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.4px' }}>
+                      HEALTH TREND
+                    </span>
+                    <span style={{ fontSize: '0.58rem', color: isAnomaly ? '#a855f7' : 'var(--text-muted)' }}>
+                      {healthHistory.length} readings
+                    </span>
+                  </div>
+                  <div style={{
+                    backgroundColor: 'var(--panel-bg-hover)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '0.4rem 0.5rem',
+                    border: isAnomaly ? '1px solid rgba(168,85,247,0.2)' : '1px solid transparent',
+                  }}>
+                    <Sparkline history={healthHistory} isAnomaly={isAnomaly} />
+                  </div>
+                </div>
+
+                {/* ── Phase Analysis ── */}
+                <div style={{ backgroundColor: 'var(--panel-bg-hover)', padding: '0.85rem', borderRadius: 'var(--radius-sm)', display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+                  <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.5px' }}>PHASE ANALYSIS</div>
+                  {['A', 'B', 'C'].map(phase => {
+                    const pScore  = typeof subHealth[phase]?.healthScore === 'number' ? subHealth[phase].healthScore : 0;
+                    const pStatus = getPhaseStatus(pScore);
+                    return (
+                      <div key={phase} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem' }}>
+                        <span style={{ color: 'var(--text-primary)', fontWeight: 600, width: '55px' }}>Phase {phase}</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>Risk: {pScore.toFixed(3)}</span>
+                        <span style={{ color: pStatus.color, fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.3rem', width: '70px', justifyContent: 'flex-end' }}>
+                          {pStatus.label} <span style={{ fontSize: '0.58rem' }}>{pStatus.icon}</span>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ─── ALERT PANEL ────────────────────────────────────────────────────── */}
+      <div className="panel-card" style={{ padding: '1.5rem', flex: 1 }}>
+        <h3 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', letterSpacing: '1px', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <AlertCircle size={16} /> LIVE ALERT STREAM
+        </h3>
+        {safeLiveAlerts.length === 0 ? (
+          <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+            No recent alerts in the stream. All systems nominal.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {safeLiveAlerts.map((alert) => (
+              <div key={alert.id} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '0.75rem 1rem', backgroundColor: 'var(--panel-bg-hover)', borderRadius: 'var(--radius-sm)',
+                borderLeft: `4px solid ${getAlertBorderColor(alert.alert)}`
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)', backgroundColor: 'var(--bg-color)', padding: '0.25rem 0.5rem', borderRadius: '4px' }}>
+                    [{alert.nodeId}]
+                  </span>
+                  <span style={{ fontSize: '0.9rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                    {alert.alert}
+                  </span>
+                </div>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                  {alert.time}
+                </span>
               </div>
             ))}
           </div>
-        </div>
-
+        )}
       </div>
     </div>
   );
-}
-
+};
 
 export default NodesView;

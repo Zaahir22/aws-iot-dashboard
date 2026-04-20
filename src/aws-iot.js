@@ -2,11 +2,11 @@
  * AWS IoT → React bridge via SSE proxy
  * ──────────────────────────────────────
  * The proxy server (simulator/proxy.js) connects to AWS IoT using device
- * certificates and re-broadcasts data via Server-Sent Events on localhost:3001.
+ * certificates and re-broadcasts data via Server-Sent Events on localhost:3010.
  * This sidesteps all Cognito / IAM / WebSocket-signing issues entirely.
  */
 
-const PROXY_URL = 'http://localhost:3001/events';
+const PROXY_URL = 'http://localhost:3010/events';
 
 let globalSource = null;
 
@@ -17,7 +17,16 @@ const connectAWS = (onData, onStatusChange) => {
     globalSource = null;
   }
 
-  onStatusChange('CONNECTING');
+  let lastStatus = null;
+
+  const emitStatus = (s) => {
+    if (s !== lastStatus) {
+      lastStatus = s;
+      onStatusChange(s);
+    }
+  };
+
+  emitStatus('CONNECTING');
   console.log('🔗 Connecting to IoT proxy at', PROXY_URL);
 
   const source = new EventSource(PROXY_URL);
@@ -25,17 +34,17 @@ const connectAWS = (onData, onStatusChange) => {
 
   source.onopen = () => {
     console.log('✅ SSE connection open');
-    onStatusChange('CONNECTED');
+    emitStatus('CONNECTED');
   };
 
   source.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
 
-      // Internal status messages from proxy
+      // Internal status messages from proxy — deduplicated
       if (data.__status) {
         console.log('📡 Proxy status:', data.__status);
-        onStatusChange(data.__status);
+        emitStatus(data.__status);
         return;
       }
 
@@ -51,11 +60,11 @@ const connectAWS = (onData, onStatusChange) => {
     const state = source.readyState;
     if (state === EventSource.CLOSED) {
       console.error('❌ SSE connection closed. Is the proxy running? (node simulator/proxy.js)');
-      onStatusChange('DISCONNECTED');
+      emitStatus('DISCONNECTED');
     } else {
       // readyState === CONNECTING  →  browser is auto-retrying, just log
       console.warn('⚠️ SSE error, browser will retry...');
-      onStatusChange('CONNECTING');
+      emitStatus('CONNECTING');
     }
   };
 
@@ -65,7 +74,7 @@ const connectAWS = (onData, onStatusChange) => {
         globalSource.close();
         globalSource = null;
         console.log('🛑 SSE connection closed');
-        onStatusChange('DISCONNECTED');
+        emitStatus('DISCONNECTED');
       }
     },
   };
