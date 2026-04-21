@@ -1,4 +1,5 @@
 import React, { useMemo, useRef, useEffect, useState } from 'react';
+import { SYSTEM_THRESHOLDS } from '../config/systemThresholds';
 import { useParams } from 'react-router-dom';
 import { Activity, Zap, Thermometer, FlaskConical, Signal, ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -79,16 +80,16 @@ const NodePage = ({ nodesData, awsStatus }) => {
       value: fmt(data?.voltage, 1),
       unit: 'kV',
       icon: Zap,
-      status: data?.voltage ? ((parseFloat(data.voltage) < 210 || parseFloat(data.voltage) > 235) ? 'CAUTION' : 'NOMINAL') : 'WAITING',
-      statColor: data?.voltage ? ((parseFloat(data.voltage) < 210 || parseFloat(data.voltage) > 235) ? '#fca5a5' : '#93c5fd') : '#93c5fd',
+      status: data?.voltage ? ((parseFloat(data.voltage) < SYSTEM_THRESHOLDS.voltage.low || parseFloat(data.voltage) > SYSTEM_THRESHOLDS.voltage.high) ? 'CAUTION' : 'NOMINAL') : 'WAITING',
+      statColor: data?.voltage ? ((parseFloat(data.voltage) < SYSTEM_THRESHOLDS.voltage.low || parseFloat(data.voltage) > SYSTEM_THRESHOLDS.voltage.high) ? '#fca5a5' : '#93c5fd') : '#93c5fd',
     },
     {
       title: 'TOP OIL TEMP',
       value: fmt(data?.temperature, 1),
       unit: '°C',
       icon: Thermometer,
-      status: parseFloat(data?.temperature) >= 75 ? 'CAUTION' : (data?.temperature ? 'NOMINAL' : 'WAITING'),
-      statColor: parseFloat(data?.temperature) >= 75 ? '#fca5a5' : '#93c5fd',
+      status: parseFloat(data?.temperature) >= SYSTEM_THRESHOLDS.temperature.warning ? 'CAUTION' : (data?.temperature ? 'NOMINAL' : 'WAITING'),
+      statColor: parseFloat(data?.temperature) >= SYSTEM_THRESHOLDS.temperature.warning ? '#fca5a5' : '#93c5fd',
     },
     {
       title: 'CURRENT LOAD',
@@ -100,7 +101,7 @@ const NodePage = ({ nodesData, awsStatus }) => {
     },
     {
       title: 'SIGNAL STRENGTH',
-      value: fmt(data?.signal ?? (data ? 95 : null), 0),
+      value: fmt(data?.signal ?? (data ? SYSTEM_THRESHOLDS.signal.default : null), 0),
       unit: 'dBm',
       icon: Signal,
       status: data ? 'NOMINAL' : 'WAITING',
@@ -351,8 +352,8 @@ const NodePage = ({ nodesData, awsStatus }) => {
                {['A', 'B', 'C'].map(phase => (
                  <div key={phase} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem' }}>
                     <span style={{ color: 'var(--text-muted)' }}>Phase {phase}</span>
-                    <span style={{ fontWeight: 600, color: (subHealth[phase]?.healthScore > 0.6) ? '#ef4444' : (subHealth[phase]?.healthScore > 0.3) ? '#f97316' : '#10b981' }}>
-                       {subHealth[phase]?.healthScore > 0.6 ? 'Critical' : subHealth[phase]?.healthScore > 0.3 ? 'Warning' : 'Optimal'}
+                    <span style={{ fontWeight: 600, color: (subHealth[phase]?.healthScore >= SYSTEM_THRESHOLDS.healthScore.criticalThreshold) ? '#ef4444' : (subHealth[phase]?.healthScore >= SYSTEM_THRESHOLDS.healthScore.warningThreshold) ? '#f97316' : '#10b981' }}>
+                       {subHealth[phase]?.healthScore >= SYSTEM_THRESHOLDS.healthScore.criticalThreshold ? 'Critical' : subHealth[phase]?.healthScore >= SYSTEM_THRESHOLDS.healthScore.warningThreshold ? 'Warning' : 'Optimal'}
                     </span>
                  </div>
                ))}

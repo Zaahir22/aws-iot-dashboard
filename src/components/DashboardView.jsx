@@ -1,4 +1,5 @@
 import React from 'react';
+import { SYSTEM_THRESHOLDS } from '../config/systemThresholds';
 import { Activity, Zap, Thermometer, FlaskConical, Database, AlertCircle, Info, FileText } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, ResponsiveContainer, XAxis } from 'recharts';
 
@@ -226,7 +227,7 @@ const DashboardView = ({ data, onExportCSV, onFullReport, awsStatus }) => {
               <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>12:45 PM</span>
             </div>
             <p style={{ fontSize: '0.875rem', color: 'var(--text-primary)', marginBottom: '0.75rem', lineHeight: '1.4' }}>
-              Top Oil Temp exceeds 75°C warning limit on Phase B.
+              Top Oil Temp exceeds {SYSTEM_THRESHOLDS.temperature.warning}°C warning limit on Phase B.
             </p>
             <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
               <div style={{ width: 4, height: 4, borderRadius: '50%', backgroundColor: 'var(--text-muted)' }}></div>

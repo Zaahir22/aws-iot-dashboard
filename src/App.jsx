@@ -1,32 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-// ─── AI Anomaly Detection (pure, no side-effects) ───────────────────────────
-function detectAnomaly(history, current) {
-  if (!Array.isArray(history) || history.length < 5) {
-    return { isAnomaly: false, anomalyReason: '' };
-  }
-  const safeHistory = history.filter(v => typeof v === 'number' && !isNaN(v));
-  if (safeHistory.length < 5) return { isAnomaly: false, anomalyReason: '' };
-
-  const mean = safeHistory.reduce((a, b) => a + b, 0) / safeHistory.length;
-  const variance = safeHistory.reduce((s, v) => s + (v - mean) ** 2, 0) / safeHistory.length;
-  const stdDev = Math.sqrt(variance);
-
-  // Guard against division by zero or near-zero stdDev
-  if (stdDev < 0.001) return { isAnomaly: false, anomalyReason: '' };
-
-  const safeCurrentVal = typeof current === 'number' && !isNaN(current) ? current : mean;
-  const zScore = Math.abs((safeCurrentVal - mean) / stdDev);
-  const suddenDrop = (mean - safeCurrentVal) > 0.15; // sharp health deterioration
-
-  if (zScore > 2) {
-    return { isAnomaly: true, anomalyReason: 'Unusual health trend deviation detected' };
-  }
-  if (suddenDrop) {
-    return { isAnomaly: true, anomalyReason: 'Sudden health score deterioration detected' };
-  }
-  return { isAnomaly: false, anomalyReason: '' };
-}
+import { SYSTEM_THRESHOLDS } from './config/systemThresholds';
+import { detectAnomaly, predictFutureScore } from './utils/anomalyDetection';
+import { anomalyStore } from './utils/anomalyStore';
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
 import connectAWS from './aws-iot';
 import {
@@ -37,13 +13,15 @@ import {
   Bell,
   Moon,
   Sun,
-  Cloud
+  Cloud,
+  Brain
 } from 'lucide-react';
 import './App.css';
 import AnalyticsView from './components/AnalyticsView';
 import NodesView from './components/NodesView';
 import NodePage from './components/NodePage';
 import AWSIoTView from './components/AWSIoTView';
+import AIDiagnosticsView from './components/AIDiagnosticsView';
 
 // ─── Initial / default app data ────────────────────────────────────────────────
 const INITIAL_APP_DATA = {
@@ -222,17 +200,18 @@ function App() {
       const voltAvg = parseFloat(data.voltage)     || 0;
       const loadAvg = parseFloat(data.loadFactor)  || 0;
 
-      // ── Determine active alerts ────────────────────────────────────────────────
+      // ── Determine active alerts using SYSTEM_THRESHOLDS ────────────────────────
       const alertParts = [];
-      if (tempAvg >= 85)        alertParts.push('CRITICAL_TEMP');
-      else if (tempAvg >= 75)   alertParts.push('HIGH_TEMP');
-      if (voltAvg < 210)        alertParts.push('UNDER_VOLTAGE');
-      else if (voltAvg > 235)   alertParts.push('HIGH_VOLTAGE');
+      if (tempAvg >= SYSTEM_THRESHOLDS.temperature.critical)      alertParts.push('CRITICAL_TEMP');
+      else if (tempAvg >= SYSTEM_THRESHOLDS.temperature.warning)  alertParts.push('HIGH_TEMP');
+      
+      if (voltAvg < SYSTEM_THRESHOLDS.voltage.low)                alertParts.push('UNDER_VOLTAGE');
+      else if (voltAvg > SYSTEM_THRESHOLDS.voltage.high)          alertParts.push('HIGH_VOLTAGE');
 
       let loadStatus = 'NORMAL';
-      if      (loadAvg >= 0.85) loadStatus = 'CRITICAL';
-      else if (loadAvg >= 0.75) loadStatus = 'HIGH';
-      else if (loadAvg >= 0.65) loadStatus = 'MODERATE';
+      if      (loadAvg >= SYSTEM_THRESHOLDS.loadFactor.critical) loadStatus = 'CRITICAL';
+      else if (loadAvg >= SYSTEM_THRESHOLDS.loadFactor.warning)  loadStatus = 'HIGH';
+      else if (loadAvg >= SYSTEM_THRESHOLDS.loadFactor.moderate) loadStatus = 'MODERATE';
 
       const activeAlert = alertParts.length > 0 ? alertParts.join(', ') : 'NORMAL';
 
@@ -242,10 +221,19 @@ function App() {
         const tmp = parseFloat(d.temperature) || 0;
         const vlt = parseFloat(d.voltage)     || 0;
         const ldf = parseFloat(d.loadFactor)  || 0;
-        const tempScore    = Math.min(Math.max((tmp - 60) / 25, 0), 1);
-        const voltageScore = Math.min(Math.max(Math.abs(vlt - 220) / 20, 0), 1);
-        const loadScore    = Math.min(Math.max((ldf - 0.5) / 0.35, 0), 1);
-        return Number(Math.min(tempScore * 0.4 + voltageScore * 0.3 + loadScore * 0.3, 0.88).toFixed(3));
+        
+        const { temperature, voltage, loadFactor, healthScore } = SYSTEM_THRESHOLDS;
+        
+        const tempScore    = Math.min(Math.max((tmp - temperature.base) / temperature.range, 0), 1);
+        const voltageScore = Math.min(Math.max(Math.abs(vlt - voltage.nominal) / voltage.tolerance, 0), 1);
+        const loadScore    = Math.min(Math.max((ldf - loadFactor.base) / loadFactor.range, 0), 1);
+        
+        const { weights } = SYSTEM_THRESHOLDS;
+        const rawScore = tempScore * weights.temperature + 
+                         voltageScore * weights.voltage + 
+                         loadScore * weights.loadFactor;
+                         
+        return Number(Math.min(rawScore, healthScore.maxCappedScore).toFixed(3));
       };
 
       const subScores    = (data.subNodes || []).map(computeHealth);
@@ -260,8 +248,8 @@ function App() {
       const safeSmoothed      = isNaN(smoothedScore) ? 0 : smoothedScore;
 
       let status = 'HEALTHY';
-      if      (safeSmoothed >= 0.88) status = 'CRITICAL';
-      else if (safeSmoothed >= 0.79) status = 'WARNING';
+      if      (safeSmoothed >= SYSTEM_THRESHOLDS.healthScore.criticalThreshold) status = 'CRITICAL';
+      else if (safeSmoothed >= SYSTEM_THRESHOLDS.healthScore.warningThreshold)  status = 'WARNING';
 
       // ── Rolling health history (stored in ref, max 20 entries) ─────────────────
       if (!healthHistoryRef.current[data.nodeId]) {
@@ -269,12 +257,30 @@ function App() {
       }
       const nodeHistory = healthHistoryRef.current[data.nodeId];
       nodeHistory.push(safeSmoothed);
-      if (nodeHistory.length > 20) nodeHistory.shift();
-      // Safe snapshot copy for state (plain array, no circular refs)
+      if (nodeHistory.length > SYSTEM_THRESHOLDS.anomaly.maxHistoryLength) nodeHistory.shift();
       const historySnapshot = [...nodeHistory];
 
       // ── Anomaly detection ──────────────────────────────────────────────────────
-      const { isAnomaly, anomalyReason } = detectAnomaly(nodeHistory, safeSmoothed);
+      const anomalyResult = detectAnomaly(nodeHistory, safeSmoothed);
+      const { isAnomaly, anomalyReason, stats } = anomalyResult;
+
+      // ── Prediction ─────────────────────────────────────────────────────────────
+      const prediction = predictFutureScore(nodeHistory);
+
+      // ── Push to Anomaly Store for diagnostics ──────────────────────────────────
+      anomalyStore.addRecord({
+        nodeId: data.nodeId,
+        currentHealthScore: safeSmoothed,
+        recentHistory: historySnapshot,
+        mean: stats? stats.mean : 0,
+        stdDev: stats? stats.stdDev : 0,
+        zScore: stats? stats.zScore : 0,
+        isAnomaly,
+        anomalyReason,
+        suddenDropDetected: stats? stats.suddenDrop : false,
+        predictedHealthScore: prediction? prediction.score : null,
+        predictedStatus: prediction? prediction.status : null
+      });
 
       // ── Anomaly notification — fire only on false → true transition ────────────
       const prevIsAnomaly = anomalyStateRef.current[data.nodeId] ?? false;
@@ -309,7 +315,7 @@ function App() {
           voltage:       voltAvg,
           loadFactor:    loadAvg,
           current:       parseFloat(data.current) || prev[data.nodeId]?.current || 0,
-          signal:        parseFloat(data.signal)  || prev[data.nodeId]?.signal  || 95,
+          signal:        parseFloat(data.signal)  || prev[data.nodeId]?.signal  || SYSTEM_THRESHOLDS.signal.default,
           healthScore:   safeSmoothed,
           status,
           loadStatus,
@@ -468,6 +474,10 @@ ACTIVE NODES: ${nodes.filter(n => n.status === 'ACTIVE').length}
           <Link to="/aws" className={`nav-item ${activePath === '/aws' ? 'active' : ''}`}>
             <Cloud size={20} /> AWS IoT
           </Link>
+          <div style={{ height: '1px', backgroundColor: 'var(--panel-border)', margin: '1rem 0', opacity: 0.5 }}></div>
+          <Link to="/ai-diagnostics" className={`nav-item ${activePath === '/ai-diagnostics' ? 'active' : ''}`} style={{ color: '#a855f7' }}>
+            <Brain size={20} /> AI Diagnostics
+          </Link>
         </nav>
 
         <div className="sidebar-footer">
@@ -509,6 +519,10 @@ ACTIVE NODES: ${nodes.filter(n => n.status === 'ACTIVE').length}
             ) : isAwsPage ? (
               <h2 style={{ fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}>
                 AWS IoT <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>Integration</span>
+              </h2>
+            ) : activePath === '/ai-diagnostics' ? (
+              <h2 style={{ fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}>
+                AI Anomaly <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>Diagnostics</span>
               </h2>
             ) : (
               <>
@@ -576,6 +590,7 @@ ACTIVE NODES: ${nodes.filter(n => n.status === 'ACTIVE').length}
             <Route path="/node/:id" element={<NodePage nodesData={nodesData} awsStatus={awsStatus} />} />
             <Route path="/analytics" element={<AnalyticsView data={finalAppData} onExportCSV={(data, name) => exportCSV(data, name)} onFullReport={() => generateFullReport('analytics')} awsStatus={awsStatus} />} />
             <Route path="/aws" element={<AWSIoTView awsStatus={awsStatus} setAwsStatus={setAwsStatus} appData={finalAppData} />} />
+            <Route path="/ai-diagnostics" element={<AIDiagnosticsView />} />
           </Routes>
         </div>
 

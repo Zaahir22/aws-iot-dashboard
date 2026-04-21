@@ -1,4 +1,5 @@
 import React from 'react';
+import { SYSTEM_THRESHOLDS } from '../config/systemThresholds';
 import { Link } from 'react-router-dom';
 import { AnomalyBadge, Sparkline } from './AnomalyUI';
 import { LayoutDashboard, AlertCircle, Zap, Thermometer, Activity, Signal, Cpu, Brain } from 'lucide-react';
@@ -134,11 +135,11 @@ const NodesView = ({ nodesData, liveAlerts }) => {
 
                 {/* Metrics */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                  <MetricRow icon={Thermometer} label="TOP OIL TEMP"    value={fmt(data.temperature, 1)} unit="°C"  color={parseFloat(data.temperature) > 75 ? '#ef4444' : '#f97316'} />
+                  <MetricRow icon={Thermometer} label="TOP OIL TEMP"    value={fmt(data.temperature, 1)} unit="°C"  color={parseFloat(data.temperature) >= SYSTEM_THRESHOLDS.temperature.warning ? '#ef4444' : '#f97316'} />
                   <MetricRow icon={Zap}         label="VOLTAGE OUTPUT"  value={fmt(data.voltage, 1)}     unit="kV"  color="#60a5fa" />
                   <MetricRow icon={Cpu}         label="CURRENT LOAD"    value={fmt(data.current, 1)}     unit="A"   color="#a78bfa" />
                   <MetricRow icon={Activity}    label="LOAD FACTOR"     value={fmt(data.loadFactor, 2)}  unit=""    color="#34d399" />
-                  <MetricRow icon={Signal}      label="SIGNAL STRENGTH" value={fmt(data.signal ?? (hasData ? 95 : null), 0)} unit="dBm" color="#94a3b8" />
+                  <MetricRow icon={Signal}      label="SIGNAL STRENGTH" value={fmt(data.signal ?? (hasData ? SYSTEM_THRESHOLDS.signal.default : null), 0)} unit="dBm" color="#94a3b8" />
                 </div>
               </div>
             </Link>
@@ -181,15 +182,15 @@ const NodesView = ({ nodesData, liveAlerts }) => {
             const sColor       = statusColors[status] || statusColors.HEALTHY;
             const healthPercent = Math.min(100, Math.max(0, healthScore * 100));
 
-            const barGradient = healthScore > 0.6
+            const barGradient = healthScore >= SYSTEM_THRESHOLDS.healthScore.criticalThreshold
               ? 'linear-gradient(90deg, #10b981 0%, #f97316 30%, #ef4444 100%)'
-              : healthScore > 0.3
+              : healthScore >= SYSTEM_THRESHOLDS.healthScore.warningThreshold
               ? 'linear-gradient(90deg, #10b981 0%, #f97316 100%)'
               : '#10b981';
 
             const getPhaseStatus = (score) => {
-              if (score > 0.6) return { label: 'CRITICAL', color: '#ef4444', icon: '🔴' };
-              if (score > 0.3) return { label: 'WARNING',  color: '#f97316', icon: '🟠' };
+              if (score >= SYSTEM_THRESHOLDS.healthScore.criticalThreshold) return { label: 'CRITICAL', color: '#ef4444', icon: '🔴' };
+              if (score >= SYSTEM_THRESHOLDS.healthScore.warningThreshold)  return { label: 'WARNING',  color: '#f97316', icon: '🟠' };
               return              { label: 'OK',       color: '#10b981', icon: '🟢' };
             };
 
@@ -271,8 +272,8 @@ const NodesView = ({ nodesData, liveAlerts }) => {
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.55rem', color: 'var(--text-muted)', marginTop: '0.35rem', fontWeight: 600 }}>
                     <span style={{ color: '#10b981' }}>0.0 ───────</span>
-                    <span style={{ color: '#f97316' }}>0.3 ───────</span>
-                    <span style={{ color: '#ef4444' }}>0.6 ───────</span>
+                    <span style={{ color: '#f97316' }}>{SYSTEM_THRESHOLDS.healthScore.warningThreshold} ───────</span>
+                    <span style={{ color: '#ef4444' }}>{SYSTEM_THRESHOLDS.healthScore.criticalThreshold} ───────</span>
                     <span>1.0</span>
                   </div>
                 </div>
